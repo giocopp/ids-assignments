@@ -1,0 +1,259 @@
+---
+title: "Assignment 3 - Web data"
+author: "Giorgio Coppola (224545)"
+date: "`r format(Sys.time(), '%B %d, %Y | %H:%M:%S | %Z')`"
+output:
+  html_document:
+    code_folding: show
+    df_print: paged
+    highlight: tango
+    number_sections: no
+    theme: cosmo
+    toc: no
+  word_document:
+    toc: no
+  pdf_document:
+    toc: no
+---
+  
+<style>
+div.answer {background-color:#f3f0ff; border-radius: 5px; padding: 20px;}
+</style>
+
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      eval = TRUE,
+                      error = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      comment = NA)
+```
+
+<!-- Do not forget to input your Github username in the YAML configuration up there --> 
+
+***
+
+```{r, include = T}
+pacman::p_load(stringr, dplyr, tidyverse, xml2, rvest, purrr, httr, jsonlite)
+```
+
+<br>
+
+***
+
+### Task 1 - Speaking regex and XPath
+
+a) Below is a messy string that contains data on IP addresses and associated cities and their countries as well as latitudes and longitudes. Use regular expressions to parse information from the string and store all variables in a data frame. Return the data frame.
+
+```{r}
+ip_geolocated <- "24.33.233.189 Ohio, USA 39.6062 -84.1695 199.53.213.86 Zurich (Switzerland) 47.3686 8.5391 85.114.48.220 Split-Dalmatia - Croatia 43.0432 16.0875 182.79.240.83 Telangana/India 17.411 78.4487"
+```
+
+```{r}
+# regex:
+# IP address: (\d+\.\d+\.\d+\.\d+)
+# City and Country: ([A-Za-z\-/]+(?:, [A-Za-z\-/]+)?(?: \([A-Za-z\-/]+\))?)
+# Latitude and Longitude: (-?\d+\.\d+) (-?\d+\.\d+)
+
+# putting them together:
+pattern <- "(\\d+\\.\\d+\\.\\d+\\.\\d+) ([A-Za-z\\-\\/\\,\\s]+)(?:\\(([A-Za-z\\-\\/\\,\\s]+)\\))? (-?\\d+\\.\\d+) (-?\\d+\\.\\d+)"
+
+# creating the dataset:
+matches_df <- tibble(text = ip_geolocated) |> 
+  mutate(matches = str_match_all(ip_geolocated, pattern)) |> 
+  unnest(matches) |> 
+  mutate(
+    `IP Address` = str_trim(matches[, 2]),
+    Location = str_trim(matches[, 3]),
+    Latitude = as.numeric(matches[, 5]),
+    Longitude = as.numeric(matches[, 6])
+  ) |> 
+  select(-text, -matches) 
+
+matches_df
+```
+
+<br>
+
+b) The file `potus.xml`, available at http://www.r-datacollection.com/materials/ch-4-xpath/potus/potus.xml, provides information on past presidents of the United States. Import the file into R using `read_xml()`, which works like `read_html()`---just for XML files. Applying XPath expressions, extract the names and nicknames of all presidents, store them in a data frame, and present the first 5 rows. <i>(Hint: this is an XML document, so `html_nodes()` will not work.)</i> Finally, extract and provide the occupations of all presidents who happened to be Baptists.
+
+```{r}
+# get the data
+potus_df <- read_xml("http://www.r-datacollection.com/materials/ch-4-xpath/potus/potus.xml")
+
+# dataframe
+presidents_df <- potus_df |> 
+  xml_find_all("//president") |> 
+  map_df(~{
+    tibble(
+      Name = xml_text(xml_find_first(.x, "./name")),
+      Nickname = xml_text(xml_find_first(.x, "./nickname"))
+    )
+  })
+
+# printing the first 5 presidents
+head(presidents_df, 5)
+```
+
+```{r}
+# extracting all Baptists presidents
+baptist_presidents_df <- potus_df |> 
+  xml_find_all("//president[religion='Baptist']") |> 
+  map_df(~{
+    tibble(
+      Name = xml_text(xml_find_first(.x, "./name")),
+      Occupation = xml_text(xml_find_first(.x, "./occupation"))
+    )
+  })
+
+baptist_presidents_df
+```
+
+
+<br>
+
+***
+
+### Task 2 - Towers of the world
+
+The article [List of tallest towers](https://en.wikipedia.org/wiki/List_of_tallest_towers) on the English Wikipedia provides various lists and tables of tall towers. Using the article version as it was published at 15:31, 18 September 2021 (accessible under the following permanent link: https://en.wikipedia.org/w/index.php?title=List_of_tallest_towers&oldid=1175962653), work on the following tasks.
+
+a) Scrape the table "Towers proposed or under construction" and parse the data into a data frame. Clean the variables for further analysis. Then, print the dataset.
+
+```{r}
+url <-  "https://en.wikipedia.org/w/index.php?title=List_of_tallest_towers&oldid=1175962653"
+xpath <-  '//*[@id="mw-content-text"]/div[1]/table[7]'
+
+### first option:
+# with xpath
+table_url <- read_html(url) |> 
+  html_element(xpath = xpath) |> 
+  html_table(fill = TRUE)
+
+table_url
+
+### second option:
+# without xpath:
+table_compact <- read_html(url) |> 
+  html_table(fill = TRUE) %>%  # for some reason the function '[[' is not supported in RHS call of the native pipe
+  .[[7]]
+
+table_compact
+```
+
+<br>
+
+b) What is the sum of the planned pinnacle height of all observation towers? Use R to compute the answer.
+
+```{r}
+sum_heigh <- table_compact |>  
+  mutate(cleaned_height = gsub("[^0-9.]", "", `Pinnacle height`)) |>  # gsub remove all the non-number characters 
+  mutate(numeric_height = as.numeric(cleaned_height)) |> 
+  summarize(total_height = sum(numeric_height)) |>  
+  pull(total_height)
+
+sum_heigh
+```
+
+
+<br>
+
+c) Now, consider the Wikipedia articles on all countries in the original table. Provide polite code that downloads the linked article HTMLs to a local folder retaining the article names as file file names. Explain why your code follows best practice of polite scraping by implementing at least three practices (bullet points are sufficient). Provide proof that the download was performed successfully by listing the file names and reporting the total number of files contained by the folder. Make sure that the folder itself is not synced to GitHub using `.gitignore`.
+
+```{r}
+# Extract country URLs
+base_url <- "https://en.wikipedia.org/wiki/"
+
+get_country_url <- function(country) {
+  url <- paste0(base_url, gsub(" ", "_", country))
+  return(url)
+}
+
+country_urls <- table_compact %>%
+  select(Country) %>%
+  mutate(url = map_chr(Country, get_country_url))
+
+country_urls
+
+# create a directory and .gitignore 
+dir.create("country_articles", showWarnings = FALSE)
+writeLines("country_articles/", ".gitignore")
+
+# download articles
+download_articles <- function(country, url) {
+  file_name <- paste0(gsub("[^a-zA-Z0-9]", "", country), ".html")
+  file_path <- file.path("country_articles", file_name)
+
+  # check if the file already exists
+  if (!file.exists(file_path)) {
+    
+    # polite scraping
+    Sys.sleep(runif(1, 0, 1))
+    
+    # handle errors and write the response content to a file
+    tryCatch({
+      response <- GET(url, user_agent("MyPoliteScraper/1.0"))
+      if (status_code(response) == 200) {
+        content <- content(response, "text")
+        write_file(content, file_path)
+      } else {
+        message("Failed to download ", url, ": HTTP ", status_code(response))
+      }
+    }, error = function(e) {
+      message("Error downloading ", url, ": ", e$message)
+    })
+  }
+}
+
+# use purrr to apply the function
+walk2(country_urls$Country, country_urls$url, download_articles)
+
+# check the download
+wiki_articles <- list.files("country_articles")
+wiki_articles
+length(wiki_articles)
+```
+
+<br>
+
+***
+
+### Task 3 - Eat my shorts
+
+Write a R wrapper for the Simpons Quote API (https://thesimpsonsquoteapi.glitch.me/) that accepts input for `character` and `count` parameters and that returns data in `data.frame` format. The function should also return a meaningful message that, e.g., reports the number of quotes fetched as well as the first fetched quote and its author if possible. Show that it works with an example prompt.
+
+```{r}
+get_simpsons_quotes <- function(character = NULL, count = 1) {
+  
+  # define APi endpoint, query parameters, and GET request
+  url <- "https://thesimpsonsquoteapi.glitch.me/quotes"
+  params <- list("character" = character, "count" = count)
+  response <- GET(url, query = params)
+  
+  # check status of request
+  if (http_status(response)$category != "Success") {
+    stop("Failed to fetch quotes. Please try again.")
+  }
+  
+  # parse, convert, return results
+  quotes_df <- response |>
+    content(as = 'text') |>
+    fromJSON(flatten = TRUE) |>
+    as_tibble()
+  
+  if (nrow(quotes_df) > 0) {
+    message("Fetched ", nrow(quotes_df), " quotes. First quote: '", quotes_df$quote[1], "' - ", quotes_df$character[1])
+  } else {
+    message("No quotes found.")
+  }
+  
+  return(quotes_df)
+}
+
+quotes <- get_simpsons_quotes(character = "Homer Simpson", count = 3)
+quotes
+```
+
+<br>
+
