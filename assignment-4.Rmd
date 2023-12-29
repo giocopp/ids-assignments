@@ -1,0 +1,411 @@
+---
+title: "Assignment 4 - Visualization"
+author: "Giorgio Coppola - 224545"
+date: "`r format(Sys.time(), '%B %d, %Y | %H:%M:%S | %Z')`"
+output:
+  html_document:
+    code_folding: show
+    df_print: paged
+    highlight: tango
+    number_sections: no
+    theme: cosmo
+    toc: no
+  pdf_document:
+    toc: no
+---
+
+```{=html}
+<style>
+div.answer {background-color:#f3f0ff; border-radius: 5px; padding: 20px;}
+</style>
+```
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      eval = TRUE,
+                      error = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      comment = NA)
+
+options(scipen = 999)
+```
+
+------------------------------------------------------------------------
+
+```{r, include = T}
+pacman::p_load(tidyverse, scales, ggrepel, lemon, RColorBrewer, forcats, plotly, gapminder, gridExtra, patchwork)
+```
+
+<br>
+
+------------------------------------------------------------------------
+
+### Task 1 - Principles of good data visualization
+
+Over at [Our World in Data](https://ourworldindata.org/grapher/child-mortality-vs-health-expenditure) you will find a chart illustrating child mortality vs. health expenditure, 2000 to 2019, across countries.
+
+Download the data and reproduce the plot as closely as possible using only the 2019 data (i.e. the bubble scatter plot that you see when you move the slider to the right) and log scales. Your plot does not have to be interactive and the colors don't have to exactly match those from the original plot as long as your plot remains well readable.
+
+```{r}
+data <- try(read.csv("./child-mortality-vs-health-expenditure.csv"), silent = TRUE)
+
+names(data) <- c("country", "code", "year", "child_mortality", "health_expenditure", "population", "continent")
+
+data_2019 <- data |> 
+  filter(year == 2019)
+
+data_2015 <- data |> 
+  filter(year == 2015)
+
+data_2019_with_continent <- data_2019 |> 
+  left_join(select(data_2015, country, continent), by = c("country")) |> 
+  mutate(Continent = ifelse(is.na(continent.y), continent.x, continent.y)) |> 
+  select(-continent.y, -continent.x) |> 
+  filter(Continent != "")
+
+legend <- c("Africa", "Asia", "Oceania", "South America", "North America", "Europe")
+
+plot_2019 <- ggplot(data_2019_with_continent, 
+                    aes(x = health_expenditure, y = child_mortality, size = population, label = country, color = Continent)) +
+  geom_point(alpha = 0.6) +
+  scale_size_continuous(range = c(1.7, 6.5), 
+                        breaks = c(9999999, 400000000, 1400000000), 
+                        labels = c("<10M", "400M", "1.4B")) +
+  geom_text(data = subset(data_2019_with_continent, !country %in% c("Democratic Republic of Congo", "Andorra", "Iceland")),
+            aes(label = country, size = population), check_overlap = TRUE, hjust = 1.1, vjust = 1.1, show.legend = FALSE) +
+  geom_text_repel(
+    data = subset(data_2019_with_continent, country %in% c("United States", "China", "Italy", "Germany", "New Zeland")),
+    aes(label = country, size = population),
+    box.padding = 0.3,
+    point.padding = 0.3,
+    show.legend = FALSE) + # geom_text_repel() provided by ChatGPT
+  scale_x_log10(limits = c(10, NA), labels = scales::dollar) +
+  scale_y_log10() +
+  scale_color_brewer(palette = "Dark2", 
+                     limits = legend) +
+  labs(x = "Current Health Expenditure per Capita, PPP",
+       y = "Child Mortality",
+       title = "Child Mortality vs Health Expenditure, 2019",
+       size = "Population") + 
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),               
+    axis.title.x = element_text(size = 8),              
+    axis.title.y = element_text(size = 8),              
+    legend.title = element_text(size = 10),               
+    legend.text = element_text(size = 8),               
+    legend.position = "right")
+```
+
+<br>
+
+```{r, fig.show="hold", out.width="90%", fig.align="center"}
+plot_2019
+
+```
+
+<br>
+
+------------------------------------------------------------------------
+
+### Task 2 - IMDb small multiples
+
+The file [`imdb_series_df.csv`](https://github.com/intro-to-data-science-23/assignment-4-setup/blob/main/imdb_series_df.csv.zip) contains a data set on rating information on series and episodes from the InternetMovieDatabase. Use these data to create a small multiples plot that illustrates a relationship of your choice. You can work with the entire dataset or a subset. Your plot should adhere to the principles of good design. In addition to the visualization, provide a sound discussion (10 sentences or less) of what the plot might tell us.
+
+*Note:* The data binary is fairly large (\~93MB). It makes sense to download it first to your local drive and then import it into R. However, make sure that the file is not synced to GitHub using `.gitignore`.
+
+```{r}
+imdb_serie_df <- try(read.csv("./imdb_series_df.csv"), silent = TRUE)
+
+breaking_bad_df <- imdb_serie_df |> 
+  filter(series_title == "Breaking Bad") |> 
+  arrange(season_nr, episode_nr) |>  
+  group_by(season_nr) |> 
+  mutate(episode_count = n()) |> 
+  ungroup() |>  
+  mutate(season_label = paste("Season", season_nr, "(", episode_count, "Episodes)")) 
+
+get_extreme_low <- function(breaking_bad_df, n = 1) {
+  bottom_episodes <- breaking_bad_df |>  top_n(-n, avg_rating)
+}
+
+get_extreme_high <- function(breaking_bad_df, n = 2) {
+  top_episodes <- breaking_bad_df |> top_n(n, avg_rating)
+}
+
+extreme_low_df <- breaking_bad_df |> 
+  group_by(season_nr) |> 
+  do(get_extreme_low(.)) |> 
+  ungroup()
+
+extreme_high_df <- breaking_bad_df |> 
+  group_by(season_nr) |> 
+  do(get_extreme_high(.)) |> 
+  ungroup()
+
+breaking_bad_plot <- ggplot(breaking_bad_df, aes(x = episode_nr, y = avg_rating, group = season_nr)) +
+  geom_line() +  
+  geom_point() + 
+  geom_smooth(method = "lm", color = "red", se = FALSE, size = 0.3, alpha = 0.3) +  
+  scale_x_continuous(limits = c(1, 17)) +
+  scale_y_continuous(limits = c(7.9, 10.1)) +
+  facet_wrap(~ season_label, scales = "fixed") +  
+  geom_text_repel(
+    data = extreme_low_df,
+    aes(label = episode_title), 
+    vjust = 0,
+    hjust = 0,
+    size = 2.5,
+    box.padding = unit(0.15, "lines"),
+    point.padding = unit(0.15, "lines"),
+    alpha = 0.8
+  ) +
+  geom_text_repel(
+    data = extreme_high_df,
+    aes(label = episode_title), 
+    vjust = -1.2, 
+    size = 2.5,
+    box.padding = unit(0.1, "lines"),
+    point.padding = unit(0.1, "lines"),
+    alpha = 0.8
+  ) +
+  labs(x = "Episode Number", 
+       y = "Average Rating", 
+       title = "Average Rating per Episode for Each Season of 'Breaking Bad'") +
+  theme_bw() +
+  theme(strip.text.x = element_text(angle = 0, size = 8),
+        plot.title = element_text(size = 12, face = "bold"),               
+        axis.title.x = element_text(size = 8),              
+        axis.title.y = element_text(size = 8))
+
+blues_palette <- brewer.pal(9, "Blues")[-c(1, 2)]
+breaking_bad_jitter <- ggplot(breaking_bad_df, aes(x = factor(season_nr), y = avg_rating)) +
+  geom_boxplot(aes(fill = factor(season_nr)), width = 0.5, alpha = 0.5) + 
+  geom_jitter(aes(color = factor(season_nr)), width = 0.2, size = 1, alpha = 0.7, stroke = 1.5) + 
+  scale_fill_manual(values = blues_palette) + 
+  scale_color_manual(values = blues_palette) +
+  labs(
+    x = "Season",
+    y = "Average Rating",
+    title = "Distribution of Average Ratings Across Seasons of 'Breaking Bad'",
+    subtitle = "Boxplots overlaid with jitter showing the distribution of episode ratings"
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(size = 12, face = "bold"),
+    plot.subtitle = element_text(size = 10),
+    axis.title.x = element_text(size = 10),
+    axis.title.y = element_text(size = 10)
+  )
+```
+<br>
+
+```{r, fig.show="hold", out.width="75%", fig.align="center", warning=F, echo=F}
+breaking_bad_plot
+
+```
+<br>
+
+```{r, fig.show="hold", out.width="75%", fig.align="center", warning=F, echo=F}
+breaking_bad_jitter
+
+```
+<br>
+
+Answer:
+The plot visualizes the average IMDb rating for each episode of "Breaking Bad" episodes across all seasons, with each season displayed as a separate facet, revealing how viewers perceived the quality of individual episodes over time. The red linear trend lines suggest that, overall, the series maintained a high level of viewer appreciation, with episodes mostly rating above 8.5, indicative of a consistently high-quality production. Seasonal trends can be observed, such as Season 4 displaying a general upward trend in episode ratings, potentially reflecting a season that built up to a highly regarded climax. On the other hand, Season 3 shows more variability, with some episodes receiving lower ratings but recovering towards the end. The episodes labeled "Fly" and "Open House" are identified as lower outliers in their respective seasons, which could indicate episodes with divergent viewer reception or experimental storytelling. Indeed, "Fly" is a bottle episode, meaning that it was set in one location, and fully revolves around the obsession of Walt dealing with a fly buzzing around the lab, worried that it would contaminate the meth. The plot also highlights the show's ability to maintain viewer engagement and critical acclaim throughout its run, with even the least-rated episodes scoring relatively high. Notably, certain seasons starts strong or end on a high note. Indeed, a part from the first season, the episodes "season finale" episodes have exceptionally high ratings. The line connecting the episodes within each season demonstrates the fluctuation in viewers' reception, which could be reflective of the narrative arc's intensity and the characters' development. It is also interesting to notice that the quality of the series does not diminish as the seasons advance, which is likely in more recent series, but rather the opposite.
+
+The second plot clearly shows the distribution and the descriptives of each season.
+
+<br>
+
+------------------------------------------------------------------------
+
+### Task 3 - Principles of good data visualization
+
+On [slide 75 of the lecture slides ("Dos and"Don'ts")](https://raw.githack.com/intro-to-data-science-22/lectures/main/09-visualization/09-visualization.html#85) you find a linked list of 20 statements expressing principles of good data visualization. Follow the links to learn more about them. Then, come up with another principle of good data visualization **that is not listed on the slide** and illustrate it following the instructions below:
+
+(i) Create a two-panel plot. The left panel shows a poorly designed plot (e.g., a 3D plot), the right panel shows a well-designed alternative using the same data. You are free to use whatever data you want to make your point.
+(ii) The title of the plot should be the name of the principle, e.g. "**Don't go 3D.**"
+(iii) The bottom of the plot should provide a note that explains, in a few sentences, the principle illustrated in the plot and how the right is an improved over the left version.
+(iv) Embed the plot in your `.Rmd` but also provide it as a `.png` or `.pdf` in your submission repo.
+
+```{r}
+selected_countries <- gapminder |>
+  filter(country %in% c("China", "India", "United States", "Brazil", "Germany", "Nigeria"))
+
+## Plot 1: Less effective, complex and somewhat confusing.
+p1 <- ggplot(selected_countries, 
+             aes(x = gdpPercap, y = lifeExp, size = pop, color = country)) +
+      geom_line(aes(group = country), alpha = 0.5) + 
+      geom_point(alpha = 0.6) + 
+      scale_size_continuous(range = c(1, 6),  
+                            breaks = c(400000000, 1400000000), 
+                            labels = c("400M", "1.4B")) +
+      geom_text_repel(aes(label = ifelse(year == 2007, as.character(country), "")), 
+                      size = 3, nudge_x = 0.1, nudge_y = 0.3, max.overlaps = 3) +
+      geom_text(aes(label = as.character(year)), check_overlap = TRUE, vjust = 1, hjust = 1.1, size = 2) + 
+      scale_x_log10() + 
+      scale_color_brewer(palette = "Set2") +
+      labs(x = "GDP Per Capita (log)",
+           y = "Life Expectancy",
+           title = "Unclear Plot",
+           size = "Population") + 
+      theme_minimal() +
+      theme(
+        plot.title = element_text(size = 11),               
+        axis.title.x = element_text(size = 8),              
+        axis.title.y = element_text(size = 8),              
+        legend.title = element_text(size = 10),               
+        legend.text = element_text(size = 8), 
+        plot.subtitle = element_text(size = 7),
+        legend.position = "bottom")
+
+subtitle_text <- "Combinig the variables in this visualization can make it challenging to track the progress of each country individually. It provides non-essential information, like differences in population, and it is unclear what the lines represents. Are these time trends? Time trends should have time at the x-axis."
+wrapped_subtitle <- str_wrap(subtitle_text, width = 160)  
+p1 <- p1 + labs(subtitle = wrapped_subtitle)
+
+## Plot 2: Frist Attempt
+# Find global min and max for life expectancy and GDP per capita to fix scales
+global_min_lifeExp <- min(selected_countries$lifeExp, na.rm = TRUE)
+global_max_lifeExp <- max(selected_countries$lifeExp, na.rm = TRUE)
+global_min_gdpPercap_log <- min(log10(selected_countries$gdpPercap), na.rm = TRUE)
+global_max_gdpPercap_log <- max(log10(selected_countries$gdpPercap), na.rm = TRUE)
+
+# Create a scaling factor based on the global range of life expectancy
+global_scale_factor <- (global_max_gdpPercap_log - global_min_gdpPercap_log) / (global_max_lifeExp - global_min_lifeExp)
+
+# Function to transform life expectancy to the scale of log GDP per capita globally
+lifeExp_to_gdp_global_log <- function(lifeExp) (lifeExp - global_min_lifeExp) * global_scale_factor + global_min_gdpPercap_log
+
+# Function to inverse the transformation for the secondary axis
+gdp_to_lifeExp_global_log <- function(gdp_log) (gdp_log - global_min_gdpPercap_log) / global_scale_factor + global_min_lifeExp
+
+# Create the faceted plot with fixed scales
+p2 <- ggplot(selected_countries, aes(x = year)) +
+  geom_line(aes(y = log10(gdpPercap), group = country, color = "GDP per Capita"), size = 0.5) +
+  geom_line(aes(y = lifeExp_to_gdp_global_log(lifeExp), group = country, color = "Life Expectancy"), size = 0.5) +
+  facet_wrap(~ country, scales = "fixed") + 
+  scale_y_continuous(
+    name = "GDP per Capita (log, thousands)",
+    limits = c(global_min_gdpPercap_log, global_max_gdpPercap_log),  # Fixed y-axis scale for log GDP
+    sec.axis = sec_axis(gdp_to_lifeExp_global_log, name = "Life Expectancy")
+  ) +
+  scale_color_manual(values = c("GDP per Capita" = "royalblue3", "Life Expectancy" = "orangered")) +
+  theme_bw() +
+  theme(plot.title = element_text(size = 11),      
+        plot.subtitle = element_text(size = 7),
+        axis.title.x = element_text(size = 8),              
+        axis.title.y = element_text(color = "royalblue3", size = 8),
+        axis.title.y.right = element_text(color = "orangered", size = 8),
+        legend.title = element_text(size = 10),               
+        legend.text = element_text(size = 8),               
+        legend.position = "bottom") +
+  ggtitle("First Attempt") 
+
+subtitle_text_2 <- "This solution seems to be reasonable and failrly easy to read. However, it goes against the 'Avoid multiple y axes at all costs' principle. It might be still considered a quite effective way to show this specific relationship, but it is not optimal: it is not easy to scale the variables is a meaningful way, and people can still be confused with the two scales if pay not so much attention."
+wrapped_subtitle_2 <- str_wrap(subtitle_text_2, width = 160)  
+p2 <- p2 + labs(subtitle = wrapped_subtitle_2)
+
+
+## Plot 3: Final Attempt
+long_plot_data <- selected_countries |> 
+  mutate(gdpPercap_log = log10(gdpPercap)) |> 
+  pivot_longer(
+    cols = c("lifeExp", "gdpPercap_log"),
+    names_to = "variable",
+    values_to = "value"
+  ) |> 
+  mutate(year_label = as.factor(year))
+
+facet_titles <- c(lifeExp = "Life Expectancy", gdpPercap_log = "Log of GDP per Capita")
+
+p3 <- ggplot(long_plot_data, aes(x = year_label, y = value, group = country)) +
+  geom_point(aes(color = country), size = 0.5) +
+  geom_line(aes(color = country)) +
+  facet_wrap(~ variable, ncol = 2, scales = "free_y", labeller = as_labeller(facet_titles)) +
+  scale_color_brewer(palette = "Set2") +
+  scale_y_continuous(
+  breaks = log10(c(300, 1000, 3000, 10000, 30000)),  
+  labels = c("300", "1,000", "3,000", "10,000", "30,000"),
+   sec.axis = sec_axis(~. ,
+  breaks = c(40, 50, 60, 70, 80),  
+  labels = c("40", "50", "60", "70", "80"))) +
+  theme_bw() +
+  theme(
+    plot.title = element_text(size = 11),    
+    plot.subtitle = element_text(size = 7),
+    axis.title.x = element_text(size = 8),              
+    axis.title.y = element_text(size = 8),
+    axis.text.x = element_text(angle = 45, hjust = 1),  
+    legend.title = element_text(size = 10),               
+    legend.text = element_text(size = 8), 
+    legend.position = "bottom") +
+  labs(title = "Balance Clarity and Complexity",
+    x = "Year") +
+  guides(color = guide_legend(title = "Country")) 
+
+
+subtitle_text_3 <- "This option is probably the best. It is a two facet plot, showing two different time series: Log of GDP per Capita on the left, and Life Expectancy on the right. This solution allows simple and direct comparison, as the plots have the same x-axis. It respect the new principle 'Balance Clarity and Complexity', as well as all the others."
+wrapped_subtitle_3 <- str_wrap(subtitle_text_3, width = 155)  
+p3 <- p3 + labs(subtitle = wrapped_subtitle_3)
+
+
+```
+
+<br>
+
+```{r, include = FALSE}
+## Combine the plots
+combined <- grid.arrange(p1, p2, p3, ncol = 3)
+
+# To save the combined plot
+ggsave("combined_plot.png", combined, width = 20, height = 7)
+
+```
+
+<br>
+
+```{r, out.width="50%"}
+p1
+
+```
+
+<br>
+
+```{r, figures-side, fig.show="hold", out.width="50%", warning=F, echo=F}
+par(mfrow = c(1, 2))
+
+p2
+p3
+
+```
+
+<br>
+
+Answer:
+
+**Principle: Balance Clarity and Complexity**
+
+*Description:*
+
+This principle advocates for prioritizing clarity in data visualizations while managing complexity, with the aim to communicate the data efficiently. The objective is to present data in a manner that is straightforward and easily interpretable. The key is to strike a balance ensuring the visualization remains informative and nuanced, yet accessible and digestible to the audience. This involves a judicious use of design elements, avoiding unnecessary embellishments, and focusing on presenting data in a way that communicates the essential message with minimal need for extended explanations. The optimal level of clarity versus complexity varies depending on the data's nature and the audience's expertise. 
+
+*Comments:*
+
+First Plot:
+
+Combinig the variables in this visualization can make it challenging to track the progress of each country individually. It provides non-essential information, like differences in population, and it is unclear what the lines represents. Are these time trends? Time trends should have time at the x-axis.
+
+Second Plot:
+
+This solution seems to be reasonable and failrly easy to read. However, it goes against the 'Avoid multiple y axes at all costs' principle. It might be still considered a quite effective way to show this specific relationship, but it is not optimal: it is not easy to scale the variables is a meaningful way, and people can still be confused with the two scales if pay not so much attention.
+
+Third Plot:
+
+This option is probably the best. It is a two facet plot, showing two different time series: Log of GDP per Capita on the left, and Life Expectancy on the right. This solution allows simple and direct comparison, as the plots have the same x-axis. It respect the new principle 'Balance Clarity and Complexity', as well as all the others.
+
+
+<br>
